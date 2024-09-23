@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const axios = require('axios');
+const session = require('express-session'); // Add this line
 require('dotenv').config(); // Load environment variables
 
 const app = express();
@@ -10,6 +11,7 @@ const port = process.env.PORT || 3000;
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../public')));
+app.use(session({ secret: 'your_secret_key', resave: false, saveUninitialized: true })); // Add session middleware
 
 const storage = multer.memoryStorage(); // Store files in memory
 const upload = multer({ storage: storage });
@@ -19,8 +21,35 @@ let items = [];
 // Use environment variable for Dropbox access token
 const DROPBOX_ACCESS_TOKEN = process.env.DROPBOX_ACCESS_TOKEN;
 
+// Admin login route
+app.get('/admin/login', (req, res) => {
+  res.send(`
+    <link rel="stylesheet" href="/styles.css">
+    <div class="admin-container">
+      <h1>Admin Login</h1>
+      <form action="/admin/login" method="POST">
+        <input type="password" name="password" placeholder="Password" required />
+        <button type="submit">Login</button>
+      </form>
+    </div>
+  `);
+});
+
+app.post('/admin/login', (req, res) => {
+  const { password } = req.body;
+  if (password === 'viewsonic') { // Replace 'your_password' with your actual password
+    req.session.isAuthenticated = true; // Set session flag
+    return res.redirect('/admin');
+  }
+  res.send('Invalid password. Please try again.');
+});
+
 // Admin routes
 app.get('/admin', (req, res) => {
+  if (!req.session.isAuthenticated) {
+    return res.redirect('/admin/login'); // Redirect if not authenticated
+  }
+
   const itemList = items.map((item, index) => `
     <li class="item-list">
       <strong>${item.name}</strong> - ${item.found ? 'Found' : 'Hidden'}
