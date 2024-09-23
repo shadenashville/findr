@@ -110,8 +110,6 @@ app.get('/', (req, res) => {
   `);
 });
 
-
-
 app.post('/found', (req, res) => {
   const { code } = req.body;
   const item = items.find(item => item.code === code);
@@ -127,8 +125,12 @@ app.post('/found', (req, res) => {
           <input type="hidden" name="code" value="${item.code}" />
           <input type="text" name="inputCode" placeholder="Item Code" required /><br />
           <label>Photo Proof:</label><br />
-          <input type="file" name="photo" required />
-          <button type="submit" class="button">Submit Photo</button>
+          <div class="file-input-container">
+            <input type="file" name="photo" required />
+          </div>
+          <div class="button-container">
+            <button type="submit" class="button">Submit Photo</button>
+          </div>
         </form>
         <br />
         <a href="/" class="button">Go Back</a>
@@ -138,7 +140,6 @@ app.post('/found', (req, res) => {
     res.send('Invalid code. Please try again.');
   }
 });
-
 
 app.post('/upload', upload.single('photo'), async (req, res) => {
   const item = items.find(item => item.code === req.body.code);
@@ -173,7 +174,7 @@ app.post('/upload', upload.single('photo'), async (req, res) => {
         },
       });
 
-      item.found = true;
+      item.found = true; // Update status here
       const prizeImageUrl = sharedLinkResponse.data.url.replace('www.dropbox.com', 'dl.dropboxusercontent.com');
 
       res.send(`
@@ -187,7 +188,6 @@ app.post('/upload', upload.single('photo'), async (req, res) => {
           <a href="/" class="button">Go Back</a>
         </div>
       `);
-      
       
     } catch (error) {
       console.error(error);

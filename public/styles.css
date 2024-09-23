@@ -1,16 +1,22 @@
 /* Global Styles */
 body {
   font-family: Arial, sans-serif;
-  background-color: #f4f4f4;
+  font-size: 1rem;
+  background-color: #b61010;
   margin: 0;
   padding: 0;
+  display: flex;
+  justify-content: center; /* Center horizontally */
+  align-items: center;     /* Center vertically */
+  height: 100vh;          /* Full viewport height */
 }
 
 /* Admin Container */
 .admin-container {
-  max-width: 800px;
+  width: 90vw; /* Use viewport width */
+  max-width: 800px; /* Maximum width */
   margin: auto;
-  padding: 20px;
+  padding: 40px; /* Increase padding */
   background-color: white;
   border-radius: 10px;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
@@ -18,10 +24,11 @@ body {
 
 /* User Container */
 .user-container {
-  max-width: 800px;
+  width: 90vw; /* Use viewport width */
+  max-width: 800px; /* Maximum width */
   margin: auto;
-  padding: 20px;
-  background-color: white;
+  padding: 40px; /* Increase padding */
+  background-color: rgb(173, 195, 255);
   border-radius: 10px;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
 }
@@ -30,7 +37,8 @@ body {
 .button {
   background-color: #28a745;
   color: white;
-  padding: 10px 15px;
+  padding: 15px 30px; /* Increase button padding */
+  font-size: 2.5rem; /* Increase font size */
   border: none;
   border-radius: 5px;
   cursor: pointer;
@@ -41,20 +49,16 @@ body {
 /* Center Text */
 .center-text {
   text-align: center; /* Center the text */
-  margin: 10px 0; /* Optional spacing */
+  margin: 20px 0; /* Increase spacing */
+  font-size: 3.5rem; /* Increase font size */
 }
 
 /* Uploaded Photo Style */
 .uploaded-photo {
-  max-width: 300px; /* Set a maximum width */
-  max-height: 300px; /* Set a maximum height */
-  width: auto; /* Maintain aspect ratio */
+  max-width: 90%; /* Ensure responsiveness */
   height: auto; /* Maintain aspect ratio */
   border-radius: 10px; /* Optional: rounded corners */
 }
-
-
-
 
 .button-red {
   background-color: #dc3545;
@@ -69,9 +73,21 @@ body {
   background-color: #fff;
   border: 1px solid #ddd;
   border-radius: 5px;
-  padding: 15px;
-  margin: 10px 0;
+  padding: 20px; /* Increase padding */
+  margin: 20px 0; /* Increase margin */
 }
+
+input[type="file"] {
+  display: block; /* Make it a block element */
+  width: auto; /* Let it size according to its content */
+  padding: 15px; /* Increase padding */
+  font-size: 1.5rem; /* Increase font size */
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  cursor: pointer; /* Change cursor to pointer */
+  height: 50px; /* Set a specific height */
+}
+
 
 /* Item List Styles */
 .item-list {
@@ -82,9 +98,9 @@ body {
 .admin-form {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 20px; /* Increase gap */
   background-color: #333;
-  padding: 20px;
+  padding: 40px; /* Increase padding */
   border-radius: 10px;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
 }
@@ -94,14 +110,29 @@ body {
   display: inline;
 }
 
+/* File Input and Button Container */
+.file-input-container {
+  display: flex;
+  justify-content: center; /* Center the file input */
+  margin-bottom: 10px; /* Space below the file input */
+}
+
+.button-container {
+  display: flex;
+  justify-content: center; /* Center the submit button */
+  margin-top: 10px; /* Space above the button */
+}
+
 /* Other Styles */
 h1, h2 {
   color: #333;
   text-align: center;
+  font-size: 4rem; /* Increase font size */
 }
 
 input[type="text"], input[type="file"] {
-  padding: 10px;
+  padding: 15px; /* Increase padding */
+  font-size: 1.2rem; /* Increase font size */
   border: 1px solid #ccc;
   border-radius: 5px;
 }
