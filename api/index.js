@@ -22,13 +22,13 @@ const DROPBOX_ACCESS_TOKEN = process.env.DROPBOX_ACCESS_TOKEN;
 // Admin routes
 app.get('/admin', (req, res) => {
   const itemList = items.map((item, index) => `
-    <li>
+    <li class="item-list">
       <strong>${item.name}</strong> - ${item.found ? 'Found' : 'Hidden'}
-      <form action="/admin/edit/${index}" method="GET" style="display:inline;">
+      <form action="/admin/edit/${index}" method="GET" class="inline-form">
         <button class="button" type="submit">Edit</button>
       </form>
-      <form action="/admin/delete/${index}" method="POST" style="display:inline;">
-        <button class="button" type="submit">Delete</button>
+      <form action="/admin/delete/${index}" method="POST" class="inline-form">
+        <button class="button button-red" type="submit">Delete</button>
       </form>
     </li>
   `).join('');
@@ -37,7 +37,7 @@ app.get('/admin', (req, res) => {
     <link rel="stylesheet" href="/styles.css">
     <div class="admin-container">
       <h1>Admin - Hidden Items</h1>
-      <form action="/admin/add" method="POST">
+      <form action="/admin/add" method="POST" class="admin-form">
         <input type="text" name="name" placeholder="Item Name" required />
         <input type="text" name="clue" placeholder="Clue" required />
         <input type="text" name="code" placeholder="Item Code" required />
@@ -69,7 +69,7 @@ app.get('/admin/edit/:index', (req, res) => {
     <link rel="stylesheet" href="/styles.css">
     <div class="admin-container">
       <h1>Edit Item</h1>
-      <form action="/admin/edit/${req.params.index}" method="POST">
+      <form action="/admin/edit/${req.params.index}" method="POST" class="admin-form">
         <input type="text" name="name" value="${item.name}" required />
         <input type="text" name="clue" value="${item.clue}" required />
         <input type="text" name="code" value="${item.code}" required />
@@ -91,7 +91,7 @@ app.get('/', (req, res) => {
   const hiddenItems = items.filter(item => !item.found);
   res.send(`
     <link rel="stylesheet" href="/styles.css">
-    <div class="user-container">
+    <div class="user-container center-text">
       <h1>WESTHAVEN SCAVENGER</h1>
       <h2>Hidden Items:</h2>
       <div>
@@ -104,11 +104,13 @@ app.get('/', (req, res) => {
               <button class="button" type="submit">FOUND IT</button>
             </form>
           </div>
-        `).join('') : '<p>No items currently hidden.</p>'}
+        `).join('') : '<p class="center-text">No items currently hidden.</p>'}
       </div>
     </div>
   `);
 });
+
+
 
 app.post('/found', (req, res) => {
   const { code } = req.body;
@@ -117,17 +119,18 @@ app.post('/found', (req, res) => {
   if (item) {
     res.send(`
       <link rel="stylesheet" href="/styles.css">
-      <div class="user-container">
+      <div class="user-container center-text">
         <h1>Congratulations!</h1>
         <p>You found the item!</p>
-        <p>Enter Item Code to Claim Your Prize:</p>
-        <form action="/upload" method="POST" enctype="multipart/form-data">
+        <p>Enter Code for Reward:</p>
+        <form action="/upload" method="POST" enctype="multipart/form-data" class="center-text">
           <input type="hidden" name="code" value="${item.code}" />
-          <input type="text" name="inputCode" placeholder="Item Code" required />
-          <label>Photo Proof:</label>
+          <input type="text" name="inputCode" placeholder="Item Code" required /><br />
+          <label>Photo Proof:</label><br />
           <input type="file" name="photo" required />
           <button type="submit" class="button">Submit Photo</button>
         </form>
+        <br />
         <a href="/" class="button">Go Back</a>
       </div>
     `);
@@ -135,6 +138,7 @@ app.post('/found', (req, res) => {
     res.send('Invalid code. Please try again.');
   }
 });
+
 
 app.post('/upload', upload.single('photo'), async (req, res) => {
   const item = items.find(item => item.code === req.body.code);
@@ -174,14 +178,17 @@ app.post('/upload', upload.single('photo'), async (req, res) => {
 
       res.send(`
         <link rel="stylesheet" href="/styles.css">
-        <div class="user-container">
+        <div class="user-container center-text">
           <h1>Congratulations!</h1>
-          <p>The Prize: ${item.directions}</p>
+          <p>Reward: ${item.directions}</p>
           <p>Your uploaded image:</p>
-          <img src="${prizeImageUrl}" alt="Prize Image" style="max-width: 100%; height: auto;" />
+          <img src="${prizeImageUrl}" alt="Prize Image" class="uploaded-photo" />
+          <br />
           <a href="/" class="button">Go Back</a>
         </div>
       `);
+      
+      
     } catch (error) {
       console.error(error);
       res.send('Error uploading photo to Dropbox.');
