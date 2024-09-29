@@ -298,7 +298,6 @@ app.post('/found', withDatabase(async (req, res) => {
         res.status(500).send('An error occurred while processing the found item.');
     }
 }));
-
 app.post('/upload', upload.single('photo'), withDatabase(async (req, res) => {
     await refreshAccessToken();
 
@@ -381,7 +380,10 @@ app.post('/upload', upload.single('photo'), withDatabase(async (req, res) => {
                 <p>Here's your photo:</p>
                 <img src="${photoUrl}" alt="Your proof" style="max-width: 300px;" />
                 <br>
-                <button class="button" onclick="window.location.href='/'">Back</button>
+                <h2>Directions to Claim Your Prize:</h2>
+                <p>${item.directions}</p>
+                <br>
+                <button class="button" onclick="window.location.href='/'">Back to Home</button>
             </div>
         `);
     } catch (error) {
