@@ -22,21 +22,28 @@ let DROPBOX_ACCESS_TOKEN = process.env.DROPBOX_ACCESS_TOKEN;
 const REFRESH_TOKEN = process.env.DROPBOX_REFRESH_TOKEN;
 
 // MongoDB setup
-const mongoClient = new MongoClient(process.env.MONGODB_URI);
-let db;
+let cachedDb = null;
 
-async function connectToMongo() {
-    try {
-        await mongoClient.connect();
-        db = mongoClient.db('findr');
-        console.log('Connected to MongoDB');
-    } catch (error) {
-        console.error('Failed to connect to MongoDB', error);
-        process.exit(1);
+async function connectToDatabase() {
+    if (cachedDb) {
+        return cachedDb;
     }
+    const client = await MongoClient.connect(process.env.MONGODB_URI);
+    const db = client.db('findr');
+    cachedDb = db;
+    return db;
 }
 
-connectToMongo();
+// Middleware to ensure database connection
+const withDatabase = (handler) => async (req, res, next) => {
+    try {
+        req.db = await connectToDatabase();
+        return handler(req, res, next);
+    } catch (error) {
+        console.error('Database connection error:', error);
+        return res.status(500).json({ error: 'Unable to connect to the database' });
+    }
+};
 
 // Initialize Twitter client
 const twitterClient = new TwitterApi({
@@ -58,6 +65,7 @@ async function refreshAccessToken() {
             },
         });
         DROPBOX_ACCESS_TOKEN = response.data.access_token;
+        console.log('Dropbox access token refreshed successfully');
     } catch (error) {
         console.error('Error refreshing token:', error.response?.data || error.message);
     }
@@ -108,14 +116,14 @@ app.post('/admin/login', (req, res) => {
 });
 
 // Admin routes
-app.get('/admin', async (req, res) => {
+app.get('/admin', withDatabase(async (req, res) => {
     if (!req.session.isAuthenticated) {
         return res.redirect('/admin/login');
     }
 
     try {
         console.log('Attempting to fetch items from MongoDB...');
-        const items = await db.collection('items').find().toArray();
+        const items = await req.db.collection('items').find().toArray();
         console.log(`Successfully fetched ${items.length} items from MongoDB`);
 
         const itemList = items.map((item) => `
@@ -149,34 +157,40 @@ app.get('/admin', async (req, res) => {
         console.error('Error in /admin route:', error);
         res.status(500).send('An error occurred while loading the admin page. Please check server logs for more information.');
     }
-});
+}));
 
-app.post('/admin/add', async (req, res) => {
+app.post('/admin/add', withDatabase(async (req, res) => {
     const { name, clue, code, directions } = req.body;
     try {
-        await db.collection('items').insertOne({ name, clue, code, directions, found: false });
+        console.log('Adding new item:', { name, clue, code });
+        const result = await req.db.collection('items').insertOne({ name, clue, code, directions, found: false });
+        console.log('Item added successfully:', result);
         await tweetItemHidden(name);
         res.redirect('/admin');
     } catch (error) {
         console.error('Error adding item:', error);
         res.status(500).send('An error occurred while adding the item.');
     }
-});
+}));
 
-app.post('/admin/delete/:id', async (req, res) => {
+app.post('/admin/delete/:id', withDatabase(async (req, res) => {
     try {
-        await db.collection('items').deleteOne({ _id: new ObjectId(req.params.id) });
+        console.log('Deleting item with ID:', req.params.id);
+        const result = await req.db.collection('items').deleteOne({ _id: new ObjectId(req.params.id) });
+        console.log('Delete result:', result);
         res.redirect('/admin');
     } catch (error) {
         console.error('Error deleting item:', error);
         res.status(500).send('An error occurred while deleting the item.');
     }
-});
+}));
 
 // Edit route
-app.get('/admin/edit/:id', async (req, res) => {
+app.get('/admin/edit/:id', withDatabase(async (req, res) => {
     try {
-        const item = await db.collection('items').findOne({ _id: new ObjectId(req.params.id) });
+        console.log('Fetching item for edit with ID:', req.params.id);
+        const item = await req.db.collection('items').findOne({ _id: new ObjectId(req.params.id) });
+        console.log('Item fetched for edit:', item);
         if (!item) {
             return res.status(404).send('Item not found');
         }
@@ -197,26 +211,31 @@ app.get('/admin/edit/:id', async (req, res) => {
         console.error('Error fetching item for edit:', error);
         res.status(500).send('An error occurred while fetching the item for editing.');
     }
-});
+}));
 
-app.post('/admin/edit/:id', async (req, res) => {
+app.post('/admin/edit/:id', withDatabase(async (req, res) => {
     const { name, clue, code, directions } = req.body;
     try {
-        await db.collection('items').updateOne(
+        console.log('Updating item with ID:', req.params.id);
+        const result = await req.db.collection('items').updateOne(
             { _id: new ObjectId(req.params.id) },
             { $set: { name, clue, code, directions } }
         );
+        console.log('Update result:', result);
         res.redirect('/admin');
     } catch (error) {
         console.error('Error updating item:', error);
         res.status(500).send('An error occurred while updating the item.');
     }
-});
+}));
 
 // User routes
-app.get('/', async (req, res) => {
+app.get('/', withDatabase(async (req, res) => {
     try {
-        const hiddenItems = await db.collection('items').find({ found: false }).toArray();
+        console.log('Fetching hidden items');
+        const hiddenItems = await req.db.collection('items').find({ found: false }).toArray();
+        console.log('Hidden items found:', hiddenItems);
+
         res.send(`
             <link rel="stylesheet" href="/styles.css">
             <div class="user-container center-text">
@@ -240,12 +259,14 @@ app.get('/', async (req, res) => {
         console.error('Error fetching hidden items:', error);
         res.status(500).send('An error occurred while fetching hidden items.');
     }
-});
+}));
 
-app.post('/found', async (req, res) => {
+app.post('/found', withDatabase(async (req, res) => {
     const { code } = req.body;
     try {
-        const item = await db.collection('items').findOne({ code });
+        console.log('Searching for item with code:', code);
+        const item = await req.db.collection('items').findOne({ code });
+        console.log('Item found:', item);
         
         if (item) {
             res.send(`
@@ -276,68 +297,101 @@ app.post('/found', async (req, res) => {
         console.error('Error processing found item:', error);
         res.status(500).send('An error occurred while processing the found item.');
     }
-});
+}));
 
-app.post('/upload', upload.single('photo'), async (req, res) => {
+app.post('/upload', upload.single('photo'), withDatabase(async (req, res) => {
     await refreshAccessToken();
 
     try {
-        const item = await db.collection('items').findOne({ code: req.body.code });
+        console.log('Upload request received for code:', req.body.code);
+        
+        const item = await req.db.collection('items').findOne({ code: req.body.code });
+        console.log('Item found in database:', item);
 
-        if (item && req.body.inputCode === item.code) {
-            const photoBuffer = req.file.buffer;
-            const fileName = `${Date.now()}_${req.file.originalname}`;
-
-            const uploadResponse = await axios.post('https://content.dropboxapi.com/2/files/upload', photoBuffer, {
-                headers: {
-                    'Authorization': `Bearer ${DROPBOX_ACCESS_TOKEN}`,
-                    'Dropbox-API-Arg': JSON.stringify({
-                        path: `/uploads/${fileName}`,
-                        mode: 'add',
-                        autorename: true,
-                        mute: false,
-                    }),
-                    'Content-Type': 'application/octet-stream',
-                },
-            });
-
-            const sharedLinkResponse = await axios.post('https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings', {
-                path: uploadResponse.data.path_lower,
-                settings: {
-                    requested_visibility: 'public',
-                },
-            }, {
-                headers: {
-                    'Authorization': `Bearer ${DROPBOX_ACCESS_TOKEN}`,
-                    'Content-Type': 'application/json',
-                },
-            });
-
-            await db.collection('items').updateOne({ _id: item._id }, { $set: { found: true } });
-            await tweetItemFound(item.name);
-
-            const photoUrl = sharedLinkResponse.data.url.replace('www.dropbox.com', 'dl.dropboxusercontent.com').replace('https://', 'https://');
-
-            res.send(`
-                <link rel="stylesheet" href="/styles.css">
-                <div class="user-container center-text">
-                    <h1>Congratulations!</h1>
-                    <p>You found the item: ${item.name}</p>
-                    <p>Here's your photo:</p>
-                    <img src="${photoUrl}" alt="Your proof" style="max-width: 300px;" />
-                    <br>
-                    <button class="button" onclick="window.location.href='/'">Back</button>
-                </div>
-            `);
-        } else {
-            res.send('Invalid code. Please try again.');
+        if (!item) {
+            console.log('Item not found in database');
+            return res.status(404).send('Item not found. Please try again.');
         }
+
+        if (item.found) {
+            console.log('Item already marked as found');
+            return res.status(400).send('This item has already been found.');
+        }
+
+        if (req.body.inputCode !== item.code) {
+            console.log('Invalid code provided');
+            return res.status(400).send('Invalid code. Please try again.');
+        }
+
+        const photoBuffer = req.file.buffer;
+        const fileName = `${Date.now()}_${req.file.originalname}`;
+
+        console.log('Uploading photo to Dropbox');
+        const uploadResponse = await axios.post('https://content.dropboxapi.com/2/files/upload', photoBuffer, {
+            headers: {
+                'Authorization': `Bearer ${DROPBOX_ACCESS_TOKEN}`,
+                'Dropbox-API-Arg': JSON.stringify({
+                    path: `/uploads/${fileName}`,
+                    mode: 'add',
+                    autorename: true,
+                    mute: false,
+                }),
+                'Content-Type': 'application/octet-stream',
+            },
+        });
+        console.log('Photo uploaded successfully');
+
+        console.log('Creating shared link for photo');
+        const sharedLinkResponse = await axios.post('https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings', {
+            path: uploadResponse.data.path_lower,
+            settings: {
+                requested_visibility: 'public',
+            },
+        }, {
+            headers: {
+                'Authorization': `Bearer ${DROPBOX_ACCESS_TOKEN}`,
+                'Content-Type': 'application/json',
+            },
+        });
+        console.log('Shared link created successfully');
+
+        console.log('Updating item status in database');
+        const updateResult = await req.db.collection('items').updateOne(
+            { _id: item._id },
+            { $set: { found: true } }
+        );
+        console.log('Update result:', updateResult);
+
+        if (updateResult.modifiedCount === 0) {
+            console.log('Failed to update item status');
+            throw new Error('Failed to update item status');
+        }
+
+        console.log('Tweeting about found item');
+        await tweetItemFound(item.name);
+
+        const photoUrl = sharedLinkResponse.data.url.replace('www.dropbox.com', 'dl.dropboxusercontent.com').replace('https://', 'https://');
+
+        console.log('Sending success response to user');
+        res.send(`
+            <link rel="stylesheet" href="/styles.css">
+            <div class="user-container center-text">
+                <h1>Congratulations!</h1>
+                <p>You found the item: ${item.name}</p>
+                <p>Here's your photo:</p>
+                <img src="${photoUrl}" alt="Your proof" style="max-width: 300px;" />
+                <br>
+                <button class="button" onclick="window.location.href='/'">Back</button>
+            </div>
+        `);
     } catch (error) {
         console.error('Error processing upload:', error);
         res.status(500).send('An error occurred while processing your upload. Please try again.');
     }
-});
+}));
 
 app.listen(port, () => {
-    console.log(`Server is running on http://localhost:${port}`);
+    console.log(`Server is ready to handle requests on port ${port}`);
 });
+
+module.exports = app;
