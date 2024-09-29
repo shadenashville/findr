@@ -2,8 +2,10 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const axios = require('axios');
-const session = require('express-session'); // Add this line
-require('dotenv').config(); // Load environment variables
+const session = require('express-session');
+const { TwitterApi } = require('twitter-api-v2');
+const { MongoClient, ObjectId } = require('mongodb');
+require('dotenv').config();
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -11,223 +13,331 @@ const port = process.env.PORT || 3000;
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../public')));
-app.use(session({ secret: 'your_secret_key', resave: false, saveUninitialized: true })); // Add session middleware
+app.use(session({ secret: 'your_secret_key', resave: false, saveUninitialized: true }));
 
-const storage = multer.memoryStorage(); // Store files in memory
+const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
-let items = [];
+let DROPBOX_ACCESS_TOKEN = process.env.DROPBOX_ACCESS_TOKEN;
+const REFRESH_TOKEN = process.env.DROPBOX_REFRESH_TOKEN;
 
-// Use environment variable for Dropbox access token
-const DROPBOX_ACCESS_TOKEN = process.env.DROPBOX_ACCESS_TOKEN;
+// MongoDB setup
+const mongoClient = new MongoClient(process.env.MONGODB_URI);
+let db;
+
+async function connectToMongo() {
+    try {
+        await mongoClient.connect();
+        db = mongoClient.db('findr');
+        console.log('Connected to MongoDB');
+    } catch (error) {
+        console.error('Failed to connect to MongoDB', error);
+        process.exit(1);
+    }
+}
+
+connectToMongo();
+
+// Initialize Twitter client
+const twitterClient = new TwitterApi({
+    appKey: process.env.X_API_KEY,
+    appSecret: process.env.X_API_KEY_SECRET,
+    accessToken: process.env.X_ACCESS_TOKEN,
+    accessSecret: process.env.X_ACCESS_TOKEN_SECRET,
+});
+
+// Function to refresh the Dropbox access token
+async function refreshAccessToken() {
+    try {
+        const response = await axios.post('https://api.dropboxapi.com/oauth2/token', null, {
+            params: {
+                grant_type: 'refresh_token',
+                refresh_token: REFRESH_TOKEN,
+                client_id: process.env.DROPBOX_CLIENT_ID,
+                client_secret: process.env.DROPBOX_CLIENT_SECRET,
+            },
+        });
+        DROPBOX_ACCESS_TOKEN = response.data.access_token;
+    } catch (error) {
+        console.error('Error refreshing token:', error.response?.data || error.message);
+    }
+}
+
+// Tweet functions
+const tweetItemHidden = async (itemName) => {
+    const message = `NEW HIDDEN ITEM ALERT | ${itemName}`;
+    try {
+        await twitterClient.v2.tweet(message);
+        console.log(`Tweeted: ${message}`);
+    } catch (err) {
+        console.error('Error tweeting:', err);
+    }
+};
+
+const tweetItemFound = async (itemName) => {
+    const message = `ITEM FOUND | ${itemName}`;
+    try {
+        await twitterClient.v2.tweet(message);
+        console.log(`Tweeted: ${message}`);
+    } catch (err) {
+        console.error('Error tweeting:', err);
+    }
+};
 
 // Admin login route
 app.get('/admin/login', (req, res) => {
-  res.send(`
-    <link rel="stylesheet" href="/styles.css">
-    <div class="admin-container">
-      <h1>Admin Login</h1>
-      <form action="/admin/login" method="POST">
-        <input type="password" name="password" placeholder="Password" required />
-        <button type="submit">Login</button>
-      </form>
-    </div>
-  `);
+    res.send(`
+        <link rel="stylesheet" href="/styles.css">
+        <div class="admin-container">
+            <h1>Admin Login</h1>
+            <form action="/admin/login" method="POST">
+                <input type="password" name="password" placeholder="Password" required />
+                <button type="submit">Login</button>
+            </form>
+        </div>
+    `);
 });
 
 app.post('/admin/login', (req, res) => {
-  const { password } = req.body;
-  if (password === 'viewsonic') { // Replace 'your_password' with your actual password
-    req.session.isAuthenticated = true; // Set session flag
-    return res.redirect('/admin');
-  }
-  res.send('Invalid password. Please try again.');
+    const { password } = req.body;
+    if (password === 'viewsonic') {
+        req.session.isAuthenticated = true;
+        return res.redirect('/admin');
+    }
+    res.send('Invalid password. Please try again.');
 });
 
 // Admin routes
-app.get('/admin', (req, res) => {
-  if (!req.session.isAuthenticated) {
-    return res.redirect('/admin/login'); // Redirect if not authenticated
-  }
+app.get('/admin', async (req, res) => {
+    if (!req.session.isAuthenticated) {
+        return res.redirect('/admin/login');
+    }
 
-  const itemList = items.map((item, index) => `
-    <li class="item-list">
-      <strong>${item.name}</strong> - ${item.found ? 'Found' : 'Hidden'}
-      <form action="/admin/edit/${index}" method="GET" class="inline-form">
-        <button class="button" type="submit">Edit</button>
-      </form>
-      <form action="/admin/delete/${index}" method="POST" class="inline-form">
-        <button class="button button-red" type="submit">Delete</button>
-      </form>
-    </li>
-  `).join('');
+    try {
+        console.log('Attempting to fetch items from MongoDB...');
+        const items = await db.collection('items').find().toArray();
+        console.log(`Successfully fetched ${items.length} items from MongoDB`);
 
-  res.send(`
-    <link rel="stylesheet" href="/styles.css">
-    <div class="admin-container">
-      <h1>Admin - Hidden Items</h1>
-      <form action="/admin/add" method="POST" class="admin-form">
-        <input type="text" name="name" placeholder="Item Name" required />
-        <input type="text" name="clue" placeholder="Clue" required />
-        <input type="text" name="code" placeholder="Item Code" required />
-        <input type="text" name="directions" placeholder="Directions to Claim Prize" required />
-        <button class="button" type="submit">Add Item</button>
-      </form>
-      <h2>Current Hidden Items:</h2>
-      <ul>${itemList}</ul>
-    </div>
-  `);
+        const itemList = items.map((item) => `
+            <li class="item-list">
+                <strong>${item.name}</strong> - ${item.found ? 'Found' : 'Hidden'}
+                <form action="/admin/edit/${item._id}" method="GET" class="inline-form">
+                    <button class="button" type="submit">Edit</button>
+                </form>
+                <form action="/admin/delete/${item._id}" method="POST" class="inline-form">
+                    <button class="button button-red" type="submit">Delete</button>
+                </form>
+            </li>
+        `).join('');
+
+        res.send(`
+            <link rel="stylesheet" href="/styles.css">
+            <div class="admin-container">
+                <h1>Admin - Hidden Items</h1>
+                <form action="/admin/add" method="POST" class="admin-form">
+                    <input type="text" name="name" placeholder="Item Name" required />
+                    <input type="text" name="clue" placeholder="Clue" required />
+                    <input type="text" name="code" placeholder="Item Code" required />
+                    <input type="text" name="directions" placeholder="Directions to Claim Prize" required />
+                    <button class="button" type="submit">Add Item</button>
+                </form>
+                <h2>Current Hidden Items:</h2>
+                <ul>${itemList}</ul>
+            </div>
+        `);
+    } catch (error) {
+        console.error('Error in /admin route:', error);
+        res.status(500).send('An error occurred while loading the admin page. Please check server logs for more information.');
+    }
 });
 
-// Admin add, delete, edit routes
-app.post('/admin/add', (req, res) => {
-  const { name, clue, code, directions } = req.body;
-  items.push({ name, clue, code, directions, found: false });
-  res.redirect('/admin');
+app.post('/admin/add', async (req, res) => {
+    const { name, clue, code, directions } = req.body;
+    try {
+        await db.collection('items').insertOne({ name, clue, code, directions, found: false });
+        await tweetItemHidden(name);
+        res.redirect('/admin');
+    } catch (error) {
+        console.error('Error adding item:', error);
+        res.status(500).send('An error occurred while adding the item.');
+    }
 });
 
-app.post('/admin/delete/:index', (req, res) => {
-  items.splice(req.params.index, 1);
-  res.redirect('/admin');
+app.post('/admin/delete/:id', async (req, res) => {
+    try {
+        await db.collection('items').deleteOne({ _id: new ObjectId(req.params.id) });
+        res.redirect('/admin');
+    } catch (error) {
+        console.error('Error deleting item:', error);
+        res.status(500).send('An error occurred while deleting the item.');
+    }
 });
 
 // Edit route
-app.get('/admin/edit/:index', (req, res) => {
-  const item = items[req.params.index];
-  res.send(`
-    <link rel="stylesheet" href="/styles.css">
-    <div class="admin-container">
-      <h1>Edit Item</h1>
-      <form action="/admin/edit/${req.params.index}" method="POST" class="admin-form">
-        <input type="text" name="name" value="${item.name}" required />
-        <input type="text" name="clue" value="${item.clue}" required />
-        <input type="text" name="code" value="${item.code}" required />
-        <input type="text" name="directions" value="${item.directions}" required />
-        <button class="button" type="submit">Update Item</button>
-      </form>
-    </div>
-  `);
+app.get('/admin/edit/:id', async (req, res) => {
+    try {
+        const item = await db.collection('items').findOne({ _id: new ObjectId(req.params.id) });
+        if (!item) {
+            return res.status(404).send('Item not found');
+        }
+        res.send(`
+            <link rel="stylesheet" href="/styles.css">
+            <div class="admin-container">
+                <h1>Edit Item</h1>
+                <form action="/admin/edit/${item._id}" method="POST" class="admin-form">
+                    <input type="text" name="name" value="${item.name}" required />
+                    <input type="text" name="clue" value="${item.clue}" required />
+                    <input type="text" name="code" value="${item.code}" required />
+                    <input type="text" name="directions" value="${item.directions}" required />
+                    <button class="button" type="submit">Update Item</button>
+                </form>
+            </div>
+        `);
+    } catch (error) {
+        console.error('Error fetching item for edit:', error);
+        res.status(500).send('An error occurred while fetching the item for editing.');
+    }
 });
 
-app.post('/admin/edit/:index', (req, res) => {
-  const { name, clue, code, directions } = req.body;
-  items[req.params.index] = { name, clue, code, directions, found: items[req.params.index].found };
-  res.redirect('/admin');
+app.post('/admin/edit/:id', async (req, res) => {
+    const { name, clue, code, directions } = req.body;
+    try {
+        await db.collection('items').updateOne(
+            { _id: new ObjectId(req.params.id) },
+            { $set: { name, clue, code, directions } }
+        );
+        res.redirect('/admin');
+    } catch (error) {
+        console.error('Error updating item:', error);
+        res.status(500).send('An error occurred while updating the item.');
+    }
 });
 
 // User routes
-app.get('/', (req, res) => {
-  const hiddenItems = items.filter(item => !item.found);
-  res.send(`
-    <link rel="stylesheet" href="/styles.css">
-    <div class="user-container center-text">
-      <h1>WESTHAVEN SCAVENGER</h1>
-      <h2>Hidden Items:</h2>
-      <div>
-        ${hiddenItems.length > 0 ? hiddenItems.map(item => `
-          <div class="card">
-            <strong>${item.name}</strong>
-            <p>${item.clue}</p>
-            <form action="/found" method="POST">
-              <input type="hidden" name="code" value="${item.code}" />
-              <button class="button" type="submit">FOUND IT</button>
-            </form>
-          </div>
-        `).join('') : '<p class="center-text">No items currently hidden.</p>'}
-      </div>
-    </div>
-  `);
+app.get('/', async (req, res) => {
+    try {
+        const hiddenItems = await db.collection('items').find({ found: false }).toArray();
+        res.send(`
+            <link rel="stylesheet" href="/styles.css">
+            <div class="user-container center-text">
+                <h1>WESTHAVEN SCAVENGER</h1>
+                <h2>Hidden Items:</h2>
+                <div>
+                    ${hiddenItems.length > 0 ? hiddenItems.map(item => `
+                        <div class="card">
+                            <strong>${item.name}</strong>
+                            <p>${item.clue}</p>
+                            <form action="/found" method="POST">
+                                <input type="hidden" name="code" value="${item.code}" />
+                                <button class="button" type="submit">FOUND IT</button>
+                            </form>
+                        </div>
+                    `).join('') : '<p class="center-text">No items currently hidden.</p>'}
+                </div>
+            </div>
+        `);
+    } catch (error) {
+        console.error('Error fetching hidden items:', error);
+        res.status(500).send('An error occurred while fetching hidden items.');
+    }
 });
 
-app.post('/found', (req, res) => {
-  const { code } = req.body;
-  const item = items.find(item => item.code === code);
-  
-  if (item) {
-    res.send(`
-      <link rel="stylesheet" href="/styles.css">
-      <div class="user-container center-text">
-        <h1>Congratulations!</h1>
-        <p>You found the item!</p>
-        <p>Enter Code for Reward:</p>
-        <form action="/upload" method="POST" enctype="multipart/form-data" class="center-text">
-          <input type="hidden" name="code" value="${item.code}" />
-          <input type="text" name="inputCode" placeholder="Item Code" required /><br />
-          <label>Photo Proof:</label><br />
-          <div class="file-input-container">
-            <input type="file" name="photo" required />
-          </div>
-          <div class="button-container">
-            <button type="submit" class="button">Submit Photo</button>
-          </div>
-        </form>
-        <br />
-        <a href="/" class="button">Go Back</a>
-      </div>
-    `);
-  } else {
-    res.send('Invalid code. Please try again.');
-  }
+app.post('/found', async (req, res) => {
+    const { code } = req.body;
+    try {
+        const item = await db.collection('items').findOne({ code });
+        
+        if (item) {
+            res.send(`
+                <link rel="stylesheet" href="/styles.css">
+                <div class="user-container center-text">
+                    <h1>Congratulations!</h1>
+                    <p>You found the item!</p>
+                    <p>Enter Code for Reward:</p>
+                    <form action="/upload" method="POST" enctype="multipart/form-data" class="center-text">
+                        <input type="hidden" name="code" value="${item.code}" />
+                        <input type="text" name="inputCode" placeholder="Item Code" required /><br />
+                        <label>Photo Proof:</label><br />
+                        <div class="file-input-container">
+                            <input type="file" name="photo" required />
+                        </div>
+                        <div class="button-container">
+                            <button type="submit" class="button">Submit Photo</button>
+                        </div>
+                    </form>
+                    <br />
+                    <a href="/" class="button">Go Back</a>
+                </div>
+            `);
+        } else {
+            res.send('Invalid code. Please try again.');
+        }
+    } catch (error) {
+        console.error('Error processing found item:', error);
+        res.status(500).send('An error occurred while processing the found item.');
+    }
 });
 
 app.post('/upload', upload.single('photo'), async (req, res) => {
-  const item = items.find(item => item.code === req.body.code);
-  
-  if (item && req.body.inputCode === item.code) {
-    const photoBuffer = req.file.buffer;
-    const fileName = `${Date.now()}_${req.file.originalname}`;
-    
+    await refreshAccessToken();
+
     try {
-      const uploadResponse = await axios.post('https://content.dropboxapi.com/2/files/upload', photoBuffer, {
-        headers: {
-          'Authorization': `Bearer ${DROPBOX_ACCESS_TOKEN}`,
-          'Dropbox-API-Arg': JSON.stringify({
-            path: `/uploads/${fileName}`,
-            mode: 'add',
-            autorename: true,
-            mute: false,
-          }),
-          'Content-Type': 'application/octet-stream',
-        },
-      });
-      
-      const sharedLinkResponse = await axios.post('https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings', {
-        path: uploadResponse.data.path_lower,
-        settings: {
-          requested_visibility: 'public',
-        },
-      }, {
-        headers: {
-          'Authorization': `Bearer ${DROPBOX_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-      });
+        const item = await db.collection('items').findOne({ code: req.body.code });
 
-      item.found = true; // Update status here
-      const prizeImageUrl = sharedLinkResponse.data.url.replace('www.dropbox.com', 'dl.dropboxusercontent.com');
+        if (item && req.body.inputCode === item.code) {
+            const photoBuffer = req.file.buffer;
+            const fileName = `${Date.now()}_${req.file.originalname}`;
 
-      res.send(`
-        <link rel="stylesheet" href="/styles.css">
-        <div class="user-container center-text">
-          <h1>Congratulations!</h1>
-          <p>Reward: ${item.directions}</p>
-          <p>Your uploaded image:</p>
-          <img src="${prizeImageUrl}" alt="Prize Image" class="uploaded-photo" />
-          <br />
-          <a href="/" class="button">Go Back</a>
-        </div>
-      `);
-      
+            const uploadResponse = await axios.post('https://content.dropboxapi.com/2/files/upload', photoBuffer, {
+                headers: {
+                    'Authorization': `Bearer ${DROPBOX_ACCESS_TOKEN}`,
+                    'Dropbox-API-Arg': JSON.stringify({
+                        path: `/uploads/${fileName}`,
+                        mode: 'add',
+                        autorename: true,
+                        mute: false,
+                    }),
+                    'Content-Type': 'application/octet-stream',
+                },
+            });
+
+            const sharedLinkResponse = await axios.post('https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings', {
+                path: uploadResponse.data.path_lower,
+                settings: {
+                    requested_visibility: 'public',
+                },
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${DROPBOX_ACCESS_TOKEN}`,
+                    'Content-Type': 'application/json',
+                },
+            });
+
+            await db.collection('items').updateOne({ _id: item._id }, { $set: { found: true } });
+            await tweetItemFound(item.name);
+
+            const photoUrl = sharedLinkResponse.data.url.replace('www.dropbox.com', 'dl.dropboxusercontent.com').replace('https://', 'https://');
+
+            res.send(`
+                <link rel="stylesheet" href="/styles.css">
+                <div class="user-container center-text">
+                    <h1>Congratulations!</h1>
+                    <p>You found the item: ${item.name}</p>
+                    <p>Here's your photo:</p>
+                    <img src="${photoUrl}" alt="Your proof" style="max-width: 300px;" />
+                    <br>
+                    <button class="button" onclick="window.location.href='/'">Back</button>
+                </div>
+            `);
+        } else {
+            res.send('Invalid code. Please try again.');
+        }
     } catch (error) {
-      console.error(error);
-      res.send('Error uploading photo to Dropbox.');
+        console.error('Error processing upload:', error);
+        res.status(500).send('An error occurred while processing your upload. Please try again.');
     }
-  } else {
-    res.send('Invalid item code. Please try again.');
-  }
 });
 
-// Start the server
 app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+    console.log(`Server is running on http://localhost:${port}`);
 });
